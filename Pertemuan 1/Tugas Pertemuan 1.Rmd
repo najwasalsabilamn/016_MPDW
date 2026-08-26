@@ -1,0 +1,1128 @@
+---
+title: "Tugas 1 Praktikum MPDW"
+author: "Najwa Salsabila M.N"
+date: "2026-05-23"
+output: 
+  rmdformats::readthedown
+---
+
+Nama : Najwa Salsabila M.N
+
+NIM : M0401241016
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+# Input Data
+
+```{r}
+library(readxl)
+
+data_sunspot <- read_excel("C:\\Users\\najwe\\Downloads\\Data Kelompok.xlsx")
+data_sunspot
+```
+
+Dataset merupakan data time series harian yang mencatat jumlah bintik matahari (sunspot number) harian. Setiap baris menunjukkan kondisi pengamatan pada satu hari, sedangkan setiap kolom berisi informasi mengenai pengamatan pada hari tersebut.
+
+Kolom Year menunjukkan tahun pengamatan.
+Kolom Month menunjukkan bulan pengamatan.
+Kolom Date menunjukkan tanggal (hari) pengamatan.
+Kolom Decimal Date menunjukkan tanggal dalam format desimal.
+Kolom Sunspot Number menunjukkan jumlah bintik matahari yang teramati pada hari tersebut.
+Kolom Std Dev menunjukkan standar deviasi dari pengamatan.
+Kolom Total Observations menunjukkan banyaknya observasi yang digunakan pada hari tersebut.
+Kolom Status menunjukkan status data (1 definitif, 0 provisional).
+
+# Menyiapkan Data (Tanggal dan Sunspot Number)
+
+```{r}
+library(dplyr)
+
+sunspot_data <- data_sunspot %>%
+  mutate(Tanggal = as.Date(paste(Year, Month, Date, sep = "-"))) %>%
+  select(Tanggal, Sunspot = `Sunspot Number`)
+```
+
+```{r}
+sunspot_data
+```
+
+# Library + Data Exploration
+```{r}
+library("forecast")
+library("graphics")
+library("TTR")
+library("TSA")
+library("rio")
+```
+
+```{r}
+sunspot.ts <-ts(sunspot_data$Sunspot)
+```
+
+```{r}
+View(sunspot_data)
+str(sunspot_data)
+```
+Fungsi `str()` menunjukkan bahwa data terdiri atas dua kolom, yaitu `Tanggal` (bertipe Date) dan `Sunspot` (bertipe numerik), sehingga data sudah siap digunakan sebagai objek deret waktu.
+
+```{r}
+dim(sunspot_data)
+```
+Output di atas menunjukkan jumlah baris (banyaknya periode pengamatan harian) dan jumlah kolom pada data.
+
+```{r}
+ts.plot(sunspot.ts, xlab="Time Period", ylab="Sunspot Number", 
+        main = "Jumlah Sunspot Harian")
+points(sunspot.ts)
+```
+Plot deret waktu di atas memperlihatkan fluktuasi jumlah sunspot harian sepanjang periode pengamatan. Berbeda dengan kesan "tanpa tren" pada pandangan sekilas, data sebenarnya naik pada kurang lebih 30-35 hari pertama (mencapai puncak di sekitar 174) lalu cenderung menurun sepanjang sisa periode. Regresi linier sederhana terhadap waktu menghasilkan slope negatif yang signifikan (sekitar -0,33 per hari, p < 0,01), dan rata-rata paruh pertama data (~106,4) jauh lebih tinggi dibandingkan rata-rata paruh kedua (~79,4). Dengan demikian, data ini **tidak stasioner dalam rata-rata** dan mengandung komponen tren menurun di samping fluktuasi (volatilitas) hariannya yang tetap cukup tinggi.
+
+# Single Moving Average & Double Moving Average
+
+## Pembagian Data
+
+Pembagian data latih dan data uji dilakukan dengan perbandingan 80% data latih dan 20% data uji.
+
+```{r}
+n <- nrow(sunspot_data)
+
+n_train <- floor(0.8 * n)
+
+# bagi data
+training_ma <- sunspot_data[1:n_train, ]
+testing_ma  <- sunspot_data[(n_train+1):n, ]
+
+# ubah ke time series
+train_ma.ts <- ts(training_ma$Sunspot)
+test_ma.ts  <- ts(testing_ma$Sunspot)
+```
+
+Eksplorasi data dilakukan pada keseluruhan data, data latih serta data uji menggunakan plot data deret waktu.
+
+```{r}
+#eksplorasi keseluruhan data
+plot(sunspot.ts, col="red",main="Plot semua data")
+points(sunspot.ts)
+```
+```{r}
+#eksplorasi data latih
+plot(train_ma.ts, col="blue",main="Plot data latih")
+points(train_ma.ts)
+```
+```{r}
+#eksplorasi data uji
+plot(test_ma.ts, col="blue",main="Plot data uji")
+points(test_ma.ts)
+```
+Ketiga plot di atas menunjukkan pola fluktuasi yang serupa antara keseluruhan data, data latih, dan data uji, sehingga pembagian data dapat dikatakan cukup representatif terhadap karakteristik data secara umum.
+
+```{r}
+library(ggplot2)
+```
+```{r}
+ggplot() + 
+  geom_line(data = training_ma, aes(x = Tanggal, y = Sunspot, col = "Data Latih")) +
+  geom_line(data = testing_ma, aes(x = Tanggal, y = Sunspot, col = "Data Uji")) +
+  labs(x = "Periode Waktu", y = "Sunspot Number", color = "Legend") +
+   scale_colour_manual(name="Keterangan:", breaks = c("Data Latih", "Data Uji"),
+                      values = c("blue", "red")) + 
+  theme_bw() + theme(legend.position = "bottom",
+                     plot.caption = element_text(hjust=0.5, size=12))
+```
+Plot gabungan berdasarkan tanggal ini memperjelas letak pembagian data latih (warna biru) dan data uji (warna merah) pada garis waktu yang sama, sehingga terlihat jelas bahwa data uji merupakan kelanjutan periode setelah data latih berakhir.
+
+## Single Moving Average (SMA)
+
+Pemulusan menggunakan metode SMA dilakukan dengan fungsi SMA(). Dalam hal ini akan dilakukan pemulusan dengan parameter N=3
+
+```{r}
+data.sma<-SMA(train_ma.ts, n=3)
+data.sma
+```
+
+```{r}
+data.ramal<-c(NA,data.sma)
+data.ramal
+```
+
+Selanjutnya dilakukan peramalan sebanyak 20 periode sesuai dengan jumlah data uji. Pada metode SMA, seluruh hasil peramalan untuk 20 periode ke depan akan memiliki nilai yang sama dengan hasil ramalan satu periode ke depan.
+
+```{r}
+data.gab<-cbind(
+  aktual=c(sunspot.ts),
+  pemulusan=c(data.sma,rep(NA,20)),
+  ramalan=c(data.ramal,rep(data.ramal[length(data.ramal)],19)))
+
+data.gab
+```
+Tabel di atas menggabungkan data aktual, hasil pemulusan pada periode data latih, serta hasil ramalan untuk 20 periode data uji. Karena SMA bersifat memulus data tanpa menangkap tren, seluruh nilai ramalan pada periode data uji bernilai konstan (sama dengan ramalan satu periode setelah data latih berakhir).
+
+Adapun plot data deret waktu dari hasil peramalan yang dilakukan adalah sebagai berikut.
+
+```{r}
+ts.plot(sunspot.ts, xlab="Time Period ", ylab="Sunspot Number", main= "SMA N=3 Data Sunspot Number")
+points(sunspot.ts)
+lines(data.gab[,2],col="green",lwd=2)
+lines(data.gab[,3],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), lty=8, col=c("black","green","red"), cex=0.5)
+```
+Garis pemulusan (hijau) mengikuti pola data aktual dengan fluktuasi yang lebih halus, sedangkan garis ramalan (merah) pada bagian data uji tampak datar (konstan), sesuai karakteristik SMA yang tidak dapat memproyeksikan tren atau perubahan pola pada data.
+
+
+### Akurasi Data Latih
+
+```{r}
+error_train.sma = train_ma.ts-data.ramal[1:length(train_ma.ts)]
+
+SSE_train.sma = sum(error_train.sma[5:length(train_ma.ts)]^2)
+MSE_train.sma = mean(error_train.sma[5:length(train_ma.ts)]^2)
+MAPE_train.sma = mean(abs((error_train.sma[5:length(train_ma.ts)]/train_ma.ts[5:length(train_ma.ts)])*100))
+
+akurasi_train.sma <- matrix(c(SSE_train.sma, MSE_train.sma, MAPE_train.sma))
+row.names(akurasi_train.sma)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi_train.sma) <- c("Akurasi m = 3")
+akurasi_train.sma
+```
+Nilai MAPE data latih pada metode pemulusan SMA dapat dilihat pada output di atas. Secara umum, berdasarkan output di atas, MAPE data latih SMA (N=3) sebesar 17,51%, nilai ini tergolong baik, namun belum masuk kategori sangat baik karena berada di atas ambang batas 10%. Selanjutnya dilakukan perhitungan nilai MAPE data uji pada metode pemulusan SMA.
+
+### Akurasi Data Uji
+
+```{r}
+#Menghitung nilai keakuratan data uji
+error_test.sma = test_ma.ts-data.gab[(n_train+1):n,3]
+
+SSE_test.sma = sum(error_test.sma^2)
+MSE_test.sma = mean(error_test.sma^2)
+MAPE_test.sma = mean(abs((error_test.sma/test_ma.ts*100)))
+
+akurasi_test.sma <- matrix(c(SSE_test.sma, MSE_test.sma, MAPE_test.sma))
+row.names(akurasi_test.sma)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi_test.sma) <- c("Akurasi m = 3")
+akurasi_test.sma
+```
+Berdasarkan output di atas, MAPE data uji SMA (N=3) sebesar **55,03%**, jauh lebih besar dibandingkan MAPE data latih (17,51%), sehingga tergolong **tidak akurat** (di atas ambang batas 50%). hal ini menunjukkan SMA menghasilkan ramalan konstan untuk seluruh periode ke depan, sehingga begitu data aktual terus berfluktuasi menjauhi nilai konstan tersebut, kesalahan ramalan menjadi semakin besar dan menunjukkan SMA kurang mampu menggeneralisasi pola data sunspot untuk peramalan jangka menengah.
+
+## Double Moving Average
+
+```{r}
+dma <- SMA(data.sma, n = 3)
+At <- 2*data.sma - dma
+Bt <- 2/(3-1)*(data.sma - dma)
+data.dma<- At+Bt
+data.ramal2<- c(NA, data.dma)
+
+t = 1:20
+f = c()
+
+for (i in t) {
+  f[i] = At[length(At)] + Bt[length(Bt)]*(i)
+}
+
+data.gab2 <- cbind(aktual = c(sunspot.ts), 
+                   pemulusan1 = c(data.sma,rep(NA,20)),
+                   pemulusan2 = c(dma, rep(NA,20)),
+                   At = c(At, rep(NA,20)), 
+                   Bt = c(Bt,rep(NA,20)),
+                   ramalan = c(data.ramal2, f[-1]))
+data.gab2
+```
+
+Hasil pemulusan menggunakan metode DMA divisualisasikan sebagai berikut
+
+```{r}
+ts.plot(sunspot.ts, xlab="Time Period ", ylab="Sunspot Number", main= "DMA N=3 Data Sunspot Number")
+points(sunspot.ts)
+lines(data.gab2[,3],col="green",lwd=2)
+lines(data.gab2[,6],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), lty=8, col=c("black","green","red"), cex=0.8)
+```
+Berbeda dengan plot SMA sebelumnya, garis ramalan (merah) pada DMA memiliki kemiringan (tidak datar) pada bagian data uji karena metode ini memproyeksikan tren yang teridentifikasi dari data latih.
+
+### Akurasi Data Latih
+
+```{r}
+error_train.dma = train_ma.ts-data.ramal2[1:length(train_ma.ts)]
+
+SSE_train.dma = sum(error_train.dma[8:length(train_ma.ts)]^2)
+MSE_train.dma = mean(error_train.dma[8:length(train_ma.ts)]^2)
+MAPE_train.dma = mean(abs((error_train.dma[8:length(train_ma.ts)]/train_ma.ts[8:length(train_ma.ts)])*100))
+
+akurasi_train.dma <- matrix(c(SSE_train.dma, MSE_train.dma, MAPE_train.dma))
+row.names(akurasi_train.dma)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi_train.dma) <- c("Akurasi m = 3")
+akurasi_train.dma
+```
+Berdasarkan output di atas, MAPE data latih DMA (m=3) sebesar **18,84%**, sedikit lebih tinggi dibandingkan MAPE data latih SMA (17,51%), namun masih dalam kategori **baik** karena belum melewati ambang batas 20%. nilai SSE (32022,63) dan MSE (438,67) pada DMA juga sedikit lebih besar dibandingkan SMA, sehingga pada data latih ini metode SMA sedikit lebih baik dibandingkan DMA untuk data sunspot ini.
+
+### Akurasi Data Uji
+
+```{r}
+error_test.dma = test_ma.ts-data.gab2[(n_train+1):n,6]
+SSE_test.dma = sum(error_test.dma^2)
+MSE_test.dma = mean(error_test.dma^2)
+MAPE_test.dma = mean(abs((error_test.dma/test_ma.ts*100)))
+
+akurasi_test.dma <- matrix(c(SSE_test.dma, MSE_test.dma, MAPE_test.dma))
+row.names(akurasi_test.dma)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi_test.dma) <- c("Akurasi m = 3")
+akurasi_test.dma
+```
+Berdasarkan data uji, MAPE DMA (53,75%) sedikit lebih rendah dibandingkan MAPE SMA (55,03%), begitu juga SSE dan MSE-nya yang lebih kecil, sehingga DMA sedikit lebih baik dibandingkan SMA dalam meramalkan data sunspot. Namun keduanya masih tergolong **tidak akurat** karena MAPE sama-sama di atas 50%, menunjukkan metode moving average kurang mampu menangkap fluktuasi data sunspot untuk peramalan 20 periode ke depan.
+
+# Single Exponential Smoothing & Double Exponential Smoothing
+
+## Pembagian Data
+Pembagian data latih dan data uji dilakukan dengan perbandingan 80% data latih dan 20% data uji.
+```{r}
+# jumlah baris data
+n <- nrow(sunspot_data)
+
+# hitung batas 80%
+n_train <- floor(0.8 * n)
+
+# bagi data
+training <- sunspot_data[1:n_train, ]
+testing  <- sunspot_data[(n_train+1):n, ]
+
+# ubah ke time series
+train.ts <- ts(training$Sunspot)
+test.ts  <- ts(testing$Sunspot)
+```
+Sama seperti pada bagian SMA/DMA, pembagian data dilakukan secara berurutan dengan 80% data pertama sebagai data latih dan 20% data sisanya sebagai data uji, agar model dapat divalidasi pada periode yang belum pernah "dilihat" saat pelatihan.
+
+## Single Exponential Smoothing
+
+```{r}
+#Cara 1 (fungsi ses)
+ses.1 <- ses(train.ts, h = 20, alpha = 0.2)
+plot(ses.1)
+```
+```{r}
+ses.1
+```
+Dengan alpha=0.2, bobot data terbaru relatif kecil sehingga hasil pemulusan cenderung lebih halus (kurang responsif terhadap perubahan mendadak pada data).
+
+```{r}
+ses.2<- ses(train.ts, h = 20, alpha = 0.7)
+plot(ses.2)
+```
+```{r}
+ses.2
+```
+Dengan alpha=0.7, bobot data terbaru jauh lebih besar sehingga hasil pemulusan lebih cepat mengikuti perubahan (fluktuasi) pada data aktual dibandingkan dengan alpha=0.2. Untuk metode SES, nilai ramalan pada seluruh periode ke depan bersifat konstan karena model ini tidak memperhitungkan komponen tren.
+
+```{r}
+autoplot(ses.1) +
+  autolayer(fitted(ses.1), series="Fitted") +
+  ylab("Sunspot Number") + xlab("Periode")
+```
+Garis "Fitted" pada plot di atas menunjukkan seberapa dekat hasil pemulusan SES (alpha=0.2) mengikuti data aktual pada periode data latih.
+
+Selanjutnya akan digunakan fungsi HoltWinters() dengan nilai inisialisasi parameter dan panjang periode peramalan yang sama dengan fungsi ses().
+
+```{r}
+ses1<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE, alpha = 0.2)
+plot(ses1)
+```
+```{r}
+ramalan1<- forecast(ses1, h=20)
+ramalan1
+```
+Fungsi HoltWinters() dengan `beta = FALSE` dan `gamma = FALSE` menghasilkan model yang setara dengan SES sederhana (alpha = 0.2), dan output di atas memberikan hasil ramalan 20 periode ke depan beserta selang kepercayaannya.
+
+```{r}
+ses2<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE, alpha = 0.7)
+plot(ses2)
+```
+```{r}
+ramalan2<- forecast(ses2, h=20)
+ramalan2
+```
+Output di atas memberikan hasil ramalan 20 periode ke depan (alpha = 0.7) beserta selang kepercayaannya.
+
+Nilai parameter α dari kedua fungsi dapat dioptimalkan menyesuaikan dari error-nya paling minimumnya. Caranya adalah dengan membuat parameter α=NULL .
+ 
+```{r}
+ses.opt <- ses(train.ts, h = 20, alpha = NULL)
+plot(ses.opt)
+```
+```{r}
+ses.opt
+```
+Nilai alpha optimum yang dihasilkan fungsi `ses()` merupakan nilai yang meminimumkan sum of squared errors (SSE) pada data latih, sehingga secara teori memberikan hasil pemulusan terbaik dibandingkan alpha yang ditentukan secara manual (0.2 maupun 0.7).
+
+```{r}
+#Lamda Optimum Holt Winter
+HWopt<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE,alpha = NULL)
+HWopt
+```
+Nilai alpha optimum yang dihasilkan sebesar **0,9999371** (mendekati 1), artinya model memberi bobot yang sangat besar pada data terbaru dan hampir mengabaikan data lama, yang masuk akal untuk data sunspot yang fluktuatif. namun karena SES tetap menghasilkan ramalan konstan, nilai level akhir (a = 71) inilah yang menjadi ramalan untuk seluruh 20 periode ke depan.
+
+```{r}
+plot(HWopt)
+```
+```{r}
+ramalanopt<- forecast(HWopt, h=20)
+ramalanopt
+```
+Ramalan dengan parameter optimum ini menjadi acuan pembanding tambahan selain skenario alpha=0.2 dan alpha=0.7.
+
+Setelah dilakukan peramalan, akan dilakukan perhitungan keakuratan hasil peramalan. Perhitungan akurasi ini dilakukan baik pada data latih dan data uji.
+
+Perhitungan akurasi data dapat dilakukan dengan cara langsung maupun manual. Secara langsung, nilai akurasi dapat diambil dari objek yang tersimpan pada hasil SES, yaitu sum of squared errors (SSE). Nilai akurasi lain dapat dihitung pula dari nilai SSE tersebut.
+
+### Akurasi Data Latih
+
+```{r}
+SSE1<-ses1$SSE
+MSE1<-ses1$SSE/length(train.ts)
+RMSE1<-sqrt(MSE1)
+
+akurasi1 <- matrix(c(SSE1,MSE1,RMSE1))
+row.names(akurasi1)<- c("SSE", "MSE", "RMSE")
+colnames(akurasi1) <- c("Akurasi lamda=0.2")
+akurasi1
+```
+```{r}
+SSE2<-ses2$SSE
+MSE2<-ses2$SSE/length(train.ts)
+RMSE2<-sqrt(MSE2)
+
+akurasi2 <- matrix(c(SSE2,MSE2,RMSE2))
+row.names(akurasi2)<- c("SSE", "MSE", "RMSE")
+colnames(akurasi2) <- c("Akurasi lamda=0.7")
+akurasi2
+```
+Pada data latih, alpha=0.7 (SSE=20748,07; MSE=259,35; RMSE=16,10) jauh lebih unggul dibandingkan alpha=0.2 (SSE=52438,65; MSE=655,48; RMSE=25,60), nilai SSE dan MSE-nya kurang dari setengah nilai alpha=0.2. Hal ini masuk akal karena data sunspot berfluktuasi cepat dari hari ke hari, sehingga bobot yang lebih besar pada observasi terbaru (alpha besar) lebih mampu mengikuti perubahan tersebut saat pemulusan.
+
+```{r}
+SSE1<-ses1$SSE
+SSE1
+```
+Nilai SSE di atas diambil langsung dari objek `ses1` sebagai pengecekan silang terhadap nilai SSE1 yang telah dihitung sebelumnya.
+
+```{r}
+fitted1<-ramalan1$fitted
+sisaan1<-ramalan1$residuals
+head(sisaan1)
+```
+`sisaan1` merupakan residual (selisih data aktual dan hasil pemulusan) dari model dengan alpha=0.2, yang akan digunakan untuk menghitung ukuran akurasi seperti SSE, MSE, dan MAPE secara manual.
+
+```{r}
+resid1<-training$Sunspot-ramalan1$fitted
+head(resid1)
+```
+Perhitungan manual `resid1` ini menghasilkan nilai yang sama dengan `sisaan1`, sebagai verifikasi bahwa residual dari fungsi `forecast()` dihitung dengan cara yang konsisten.
+
+
+```{r}
+SSE.1=sum(sisaan1[2:length(train.ts)]^2)
+SSE.1
+```
+```{r}
+MSE.1 = SSE.1/length(train.ts)
+MSE.1
+```
+```{r}
+MAPE.1 = sum(abs(sisaan1[2:length(train.ts)]/train.ts[2:length(train.ts)])*
+               100)/length(train.ts)
+MAPE.1
+```
+```{r}
+akurasi.1 <- matrix(c(SSE.1,MSE.1,MAPE.1))
+row.names(akurasi.1)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi.1) <- c("Akurasi lamda=0.2")
+akurasi.1
+```
+```{r}
+fitted2<-ramalan2$fitted
+sisaan2<-ramalan2$residuals
+head(sisaan2)
+```
+Residual `sisaan2` dihitung dengan cara yang sama seperti `sisaan1`, namun berasal dari model dengan alpha=0.7.
+
+```{r}
+resid2<-training$Sunspot-ramalan2$fitted
+head(resid2)
+```
+```{r}
+SSE.2=sum(sisaan2[2:length(train.ts)]^2)
+SSE.2
+```
+```{r}
+MSE.2 = SSE.2/length(train.ts)
+MSE.2
+```
+```{r}
+MAPE.2 = sum(abs(sisaan2[2:length(train.ts)]/train.ts[2:length(train.ts)])*
+               100)/length(train.ts)
+MAPE.2
+```
+```{r}
+akurasi.2 <- matrix(c(SSE.2,MSE.2,MAPE.2))
+row.names(akurasi.2)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi.2) <- c("Akurasi lamda=0.7")
+akurasi.2
+```
+Dari sisi MAPE, alpha=0.7 menghasilkan MAPE data latih sebesar 14,09%, jauh lebih baik dibandingkan alpha=0.2 (MAPE=24,45%). Kedua nilai ini belum masuk kategori "sangat baik" (MAPE di bawah 10%), namun MAPE alpha=0.7 sudah cukup mendekati ambang tersebut, sehingga pada data latih SES dengan alpha besar (0.7) jelas lebih unggul dibandingkan alpha kecil (0.2) untuk data sunspot ini.
+
+### Akurasi Data Uji
+ 
+Akurasi data uji dapat dihitung dengan cara yang hampir sama dengan perhitungan akurasi data latih.
+```{r}
+n_test <- nrow(testing)
+
+# error (ramalan - aktual), samakan panjang dan tipe numeric
+e1   <- as.numeric(ramalan1$mean)[1:n_test] - as.numeric(testing$Sunspot)
+e2   <- as.numeric(ramalan2$mean)[1:n_test] - as.numeric(testing$Sunspot)
+eopt <- as.numeric(ramalanopt$mean)[1:n_test] - as.numeric(testing$Sunspot)
+
+# SSE / MSE / RMSE untuk masing-masing model (abaikan NA)
+SSEtesting1  <- sum(e1^2,  na.rm = TRUE)
+MSEtesting1  <- mean(e1^2, na.rm = TRUE)
+RMSEtesting1 <- sqrt(MSEtesting1)
+
+SSEtesting2  <- sum(e2^2,  na.rm = TRUE)
+MSEtesting2  <- mean(e2^2, na.rm = TRUE)
+RMSEtesting2 <- sqrt(MSEtesting2)
+
+SSEtestingopt  <- sum(eopt^2,  na.rm = TRUE)
+MSEtestingopt  <- mean(eopt^2, na.rm = TRUE)
+RMSEtestingopt <- sqrt(MSEtestingopt)
+
+# Tabel ringkas
+akurasitesting_SSE <- matrix(c(SSEtesting1, SSEtesting2, SSEtestingopt),
+                             nrow = 3,
+                             dimnames = list(c("SSE1","SSE2","SSEopt"), "Nilai"))
+akurasitesting_MSE <- matrix(c(MSEtesting1, MSEtesting2, MSEtestingopt),
+                             nrow = 3,
+                             dimnames = list(c("MSE1","MSE2","MSEopt"), "Nilai"))
+akurasitesting_RMSE <- matrix(c(RMSEtesting1, RMSEtesting2, RMSEtestingopt),
+                              nrow = 3,
+                              dimnames = list(c("RMSE1","RMSE2","RMSEopt"), "Nilai"))
+
+akurasitesting_SSE
+```
+```{r}
+akurasitesting_MSE
+```
+```{r}
+akurasitesting_RMSE
+```
+```{r}
+accuracy(ramalan1, testing$Sunspot)
+```
+```{r}
+accuracy(ramalan2, testing$Sunspot)
+```
+```{r}
+accuracy(ramalanopt, testing$Sunspot)
+```
+Fungsi `accuracy()` memberikan ukuran-ukuran akurasi standar (seperti RMSE dan MAPE) untuk data uji, dan hasilnya konsisten dengan perhitungan manual `akurasitesting_SSE`, `akurasitesting_MSE`, dan `akurasitesting_RMSE` di atas. Pada data uji ketiga skenario justru memberikan MSE yang hampir sama (alpha=0.2: 1024,60; alpha=0.7: 1022,62; alpha optimum: 1023,10), berbeda jauh dengan pola pada data latih, di mana alpha=0.7 tampak jauh lebih unggul. Ini terjadi karena SES tetap menghasilkan ramalan konstan untuk semua 20 periode ke depan (nilai level terakhir), hasil akhirnya di data uji hanya bergantung pada level pada akhir data latih, yang ternyata mirip untuk ketiga skenario. Selain itu, MAPE data uji kedua skenario yang dihitung `accuracy()` juga masih tinggi (58,97% untuk alpha=0.2 dan 54,90% untuk alpha=0.7), sehingga sama seperti SMA/DMA, metode SES juga tergolong tidak akurat (MAPE jauh di atas 10%) dalam meramalkan 20 periode ke depan data sunspot ini.
+
+## Double Exponential Smoothing
+Pemulusan dengan metode DES kali ini akan menggunakan fungsi HoltWinters() . Jika sebelumnya nilai argumen beta dibuat FALSE , kali ini argumen tersebut akan diinisialisasi bersamaan dengan nilai alpha .
+```{r}
+des.1<- HoltWinters(train.ts, gamma = FALSE, beta = 0.2, alpha = 0.2)
+plot(des.1)
+```
+```{r}
+ramalandes1<- forecast(des.1, h=20)
+ramalandes1
+```
+Dengan alpha=0.2 dan beta=0.2, model DES pertama ini memberikan bobot rendah baik pada komponen level maupun tren, sehingga hasil pemulusan dan ramalannya relatif halus namun tetap dapat menangkap arah tren (naik/turun), berbeda dengan SES yang ramalannya konstan.
+
+```{r}
+des.2<- HoltWinters(train.ts, gamma = FALSE, beta = 0.3, alpha = 0.6)
+plot(des.2)
+```
+```{r}
+ramalandes2<- forecast(des.2, h=20)
+ramalandes2
+```
+Skenario kedua menggunakan alpha=0.6 dan beta=0.3 yang lebih besar, sehingga model lebih responsif terhadap perubahan level maupun tren terbaru dibandingkan skenario pertama.
+
+```{r}
+plot(sunspot.ts)
+lines(des.1$fitted[,1], lty=2, col="blue")
+lines(ramalandes1$mean, col="red")
+```
+Plot di atas membandingkan data aktual dengan hasil pemulusan (garis putus-putus biru) dan hasil ramalan (garis merah) dari model DES pertama.
+
+```{r}
+des.opt<- HoltWinters(train.ts, gamma = FALSE)
+des.opt
+```
+Dengan alpha dan beta tidak ditentukan (dibiarkan dioptimasi), fungsi HoltWinters() mencari kombinasi alpha dan beta yang meminimumkan SSE pada data latih, sehingga menghasilkan model DES dengan parameter optimum.
+
+```{r}
+plot(des.opt)
+```
+```{r}
+ramalandesopt<- forecast(des.opt, h=20)
+ramalandesopt
+```
+Ramalan dari model optimum ini menjadi pembanding tambahan terhadap dua skenario parameter manual sebelumnya.
+
+### Akurasi Data Latih 
+
+Selanjutnya akan dilakukan perhitungan akurasi pada data latih maupun data uji dengan ukuran akurasi SSE, MSE dan MAPE.
+```{r}
+ssedes.train1<-des.1$SSE
+msedes.train1<-ssedes.train1/length(train.ts)
+sisaandes1<-ramalandes1$residuals
+head(sisaandes1)
+```
+```{r}
+mapedes.train1 <- sum(abs(sisaandes1[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.1 <- matrix(c(ssedes.train1,msedes.train1,mapedes.train1))
+row.names(akurasides.1)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.1) <- c("Akurasi lamda=0.2 dan gamma=0.2")
+akurasides.1
+```
+```{r}
+ssedes.train2<-des.2$SSE
+msedes.train2<-ssedes.train2/length(train.ts)
+sisaandes2<-ramalandes2$residuals
+head(sisaandes2)
+```
+```{r}
+mapedes.train2 <- sum(abs(sisaandes2[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.2 <- matrix(c(ssedes.train2,msedes.train2,mapedes.train2))
+row.names(akurasides.2)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.2) <- c("Akurasi lamda=0.6 dan gamma=0.3")
+akurasides.2
+```
+Pada data latih, skenario 2 (alpha=0.6, beta=0.3) jauh lebih baik dibandingkan skenario 1 (alpha=0.2, beta=0.2): SSE=25252,39 dan MAPE=15,77% untuk skenario 2, dibandingkan SSE=121077,54 dan MAPE=35,07% untuk skenario 1. Bobot alpha dan beta yang lebih besar pada skenario 2 membuat model lebih cepat menyesuaikan diri dengan level maupun perubahan tren data yang fluktuatif ini.
+
+```{r}
+selisihdes1<-ramalandes1$mean-testing$Sunspot
+selisihdes1
+```
+### Akurasi Data Uji
+
+```{r}
+SSEtestingdes1<-sum(selisihdes1^2)
+MSEtestingdes1<-SSEtestingdes1/length(testing$Sunspot)
+MAPEtestingdes1<-sum(abs(selisihdes1/testing$Sunspot)*100)/length(testing$Sunspot)
+
+selisihdes2<-ramalandes2$mean-testing$Sunspot
+selisihdes2
+```
+```{r}
+SSEtestingdes2<-sum(selisihdes2^2)
+MSEtestingdes2<-SSEtestingdes2/length(testing$Sunspot)
+MAPEtestingdes2<-sum(abs(selisihdes2/testing$Sunspot)*100)/length(testing$Sunspot)
+
+selisihdesopt<-ramalandesopt$mean-testing$Sunspot
+selisihdesopt
+```
+```{r}
+SSEtestingdesopt<-sum(selisihdesopt^2)
+MSEtestingdesopt<-SSEtestingdesopt/length(testing$Sunspot)
+MAPEtestingdesopt<-sum(abs(selisihdesopt/testing$Sunspot)*100)/length(testing$Sunspot)
+
+akurasitestingdes <-
+  matrix(c(SSEtestingdes1,MSEtestingdes1,MAPEtestingdes1,SSEtestingdes2,MSEtestingdes2,
+           MAPEtestingdes2,SSEtestingdesopt,MSEtestingdesopt,MAPEtestingdesopt),
+         nrow=3,ncol=3)
+row.names(akurasitestingdes)<- c("SSE", "MSE", "MAPE")
+colnames(akurasitestingdes) <- c("des ske1","des ske2","des opt")
+akurasitestingdes
+```
+Tabel di atas merangkum akurasi data uji dari ketiga skenario DES. Skenario 2 (alpha=0.6, beta=0.3) memberikan hasil terbaik pada data uji (SSE=34866,46; MSE=1743,32; MAPE=57,86%), diikuti oleh model dengan parameter optimum (SSE=40932,05; MSE=2046,60; MAPE=60,49%), sedangkan skenario 1 (alpha=0.2, beta=0.2) memberikan hasil paling buruk (SSE=110745,09; MSE=5537,25; MAPE=74,37%). Cukup menarik bahwa parameter "optimum" — yang dipilih untuk meminimumkan SSE pada data latih — justru tidak menghasilkan performa terbaik pada data uji; ini adalah indikasi bahwa parameter tersebut overfit terhadap pola data latih dan kurang mampu digeneralisasi ke 20 periode data uji.
+
+## Perbandingan SES dan DES
+
+```{r}
+MSEfull <-
+  matrix(c(MSEtesting1,MSEtesting2,MSEtestingopt,MSEtestingdes1,MSEtestingdes2,
+           MSEtestingdesopt),nrow=3,ncol=2)
+row.names(MSEfull)<- c("ske 1", "ske 2", "ske opt")
+colnames(MSEfull) <- c("ses","des")
+MSEfull
+```
+Tabel MSE di atas menunjukkan bahwa SES secara konsisten mengungguli DES pada data uji di ketiga skenario parameter yang sebanding: skenario 1 (SES=1024,60 vs DES=5537,25), skenario 2 (SES=1022,62 vs DES=1743,32), dan skenario optimum (SES=1023,10 vs DES=2046,60). Artinya, penambahan komponen tren pada DES justru merugikan akurasi peramalan out-of-sample untuk data ini, kemungkinan karena tren yang teridentifikasi dari data latih (yang cenderung menurun tajam di akhir periode latih) tidak berlanjut secara konsisten pada data uji, sehingga ekstrapolasi tren DES cenderung overshoot dan menghasilkan galat yang lebih besar dibandingkan SES yang ramalannya konstan.
+
+# Pemulusan Data Musiman
+
+```{r}
+# Jumlah data
+n <- nrow(sunspot_data)
+
+# Menentukan jumlah data training 80%
+n_train <- floor(0.8 * n)
+
+# Membagi data menjadi training dan testing
+training_winter <- sunspot_data[1:n_train, ]
+testing_winter  <- sunspot_data[(n_train + 1):n, ]
+
+# Mengubah data menjadi time series
+# Frekuensi 7 digunakan untuk merepresentasikan pola mingguan
+training_winter.ts <- ts(training_winter$Sunspot, frequency = 7)
+testing_winter.ts  <- ts(testing_winter$Sunspot, frequency = 7)
+
+# Jumlah data
+length(training_winter.ts)
+length(testing_winter.ts)
+
+```
+Frekuensi musiman diset sebesar 7 untuk merepresentasikan pola mingguan. Jumlah bintik matahari (sunspot) secara fisik lebih dipengaruhi oleh siklus rotasi matahari (sekitar 27 hari) dan siklus aktivitas matahari 11 tahunan, bukan oleh pola mingguan; sehingga pemilihan frekuensi=7 di sini bersifat asumsi/latihan metode Winter dan sebaiknya dicek kembali apakah pola musiman mingguan benar-benar terlihat pada plot musiman berikut, atau apakah frekuensi lain (misalnya 27) lebih sesuai secara substansi.
+
+```{r}
+# Plot seluruh data
+plot(sunspot.ts,
+     col = "red",
+     main = "Plot Seluruh Data Sunspot",
+     xlab = "Periode",
+     ylab = "Sunspot Number")
+points(sunspot.ts)
+
+# Plot data training
+plot(training_winter.ts,
+     col = "blue",
+     main = "Plot Data Latih Sunspot",
+     xlab = "Periode",
+     ylab = "Sunspot Number")
+points(training_winter.ts)
+
+# Plot data testing
+plot(testing_winter.ts,
+     col = "green",
+     main = "Plot Data Uji Sunspot",
+     xlab = "Periode",
+     ylab = "Sunspot Number")
+points(testing_winter.ts)
+
+# Plot seasonal
+monthplot(training_winter.ts,
+          main = "Plot Musiman Data Sunspot",
+          ylab = "Sunspot Number",
+          xlab = "Periode Musiman")
+
+```
+Plot musiman (monthplot) di atas menampilkan rata-rata dan variasi data pada tiap posisi dalam siklus 7 hari. Apabila garis rata-rata antarposisi relatif datar (tidak banyak berbeda), maka pola musiman mingguan tidak terlalu kuat pada data ini, dan hasil pemulusan Winter perlu dibandingkan hati-hati dengan metode non-musiman (SMA/DMA/SES/DES) sebelumnya.
+
+## Winter Aditif
+
+Pada model pertama digunakan nilai $\alpha=0.2$, $\beta=0.1$, dan $\gamma=0.1$. Selanjutnya dibandingkan dengan model Winter dengan parameter yang dioptimalkan secara otomatis.
+
+### Pemulusan
+
+```{r}
+# Pemulusan Winter Aditif
+winter1 <- HoltWinters(
+  training_winter.ts,
+  alpha = 0.2,
+  beta = 0.1,
+  gamma = 0.1,
+  seasonal = "additive"
+)
+
+winter1
+
+winter1$fitted
+
+xhat1 <- winter1$fitted[, "xhat"]
+```
+Output `winter1` menampilkan nilai SSE model serta koefisien level, tren, dan musiman hasil pemulusan dengan parameter alpha=0.2, beta=0.1, dan gamma=0.1 yang ditentukan secara manual.
+
+```{r}
+# Winter Aditif dengan parameter optimum
+winter1.opt <- HoltWinters(
+  training_winter.ts,
+  alpha = NULL,
+  beta = NULL,
+  gamma = NULL,
+  seasonal = "additive"
+)
+
+winter1.opt
+
+# Nilai parameter optimum
+winter1.opt$alpha
+winter1.opt$beta
+winter1.opt$gamma
+
+# Nilai fitted model optimum
+xhat1.opt <- winter1.opt$fitted[, "xhat"]
+
+```
+Nilai `alpha`, `beta`, dan `gamma` di atas merupakan kombinasi parameter yang meminimumkan SSE pada data latih, sehingga model optimum ini diharapkan memberikan hasil pemulusan yang lebih baik dibandingkan parameter manual sebelumnya.
+
+### Peramalan
+
+```{r}
+# Jumlah periode yang diramalkan
+h_winter <- nrow(testing_winter)
+
+# Forecast Winter Aditif
+forecast1 <- predict(winter1, n.ahead = h_winter)
+forecast1.opt <- predict(winter1.opt, n.ahead = h_winter)
+
+forecast1
+forecast1.opt
+
+```
+Kedua output di atas menampilkan hasil ramalan 20 periode ke depan (sesuai jumlah data uji) dari model Winter Aditif manual dan model Winter Aditif dengan parameter optimum. Berbeda dengan SMA/SES, nilai ramalan pada kedua model ini tidak konstan karena memperhitungkan komponen level, tren, dan musiman sekaligus.
+
+### Plot Deret Waktu
+
+```{r}
+plot(
+  training_winter.ts,
+  main = "Winter Aditif Data Sunspot",
+  type = "l",
+  col = "black",
+  xlab = "Periode",
+  ylab = "Sunspot Number"
+)
+
+lines(xhat1, col = "red", lty = 1, lwd = 2)
+lines(xhat1.opt, col = "blue", lty = 1, lwd = 2)
+
+# Menampilkan hasil forecast
+lines(
+  ts(
+    forecast1,
+    start = tsp(training_winter.ts)[2] + 1/7,
+    frequency = 7
+  ),
+  col = "red",
+  lwd = 2
+)
+
+lines(
+  ts(
+    forecast1.opt,
+    start = tsp(training_winter.ts)[2] + 1/7,
+    frequency = 7
+  ),
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topleft",
+  c("Data Aktual", "Winter Aditif", "Winter Aditif Optimum"),
+  col = c("black", "red", "blue"),
+  lty = 1,
+  cex = 0.7
+)
+
+```
+Plot di atas membandingkan data aktual dengan garis pemulusan dan ramalan dari model Winter Aditif manual (merah) dan optimum (biru). Semakin dekat garis pemulusan/ramalan mengikuti pola naik-turun data aktual, semakin baik model tersebut menangkap pola musiman pada data.
+
+### Akurasi Data Latih
+
+```{r}
+# Akurasi training Winter Aditif
+SSE_winter1 <- winter1$SSE
+MSE_winter1 <- SSE_winter1 / length(training_winter.ts)
+RMSE_winter1 <- sqrt(MSE_winter1)
+
+SSE_winter1.opt <- winter1.opt$SSE
+MSE_winter1.opt <- SSE_winter1.opt / length(training_winter.ts)
+RMSE_winter1.opt <- sqrt(MSE_winter1.opt)
+
+akurasi_winter1.train <- data.frame(
+  Model = c("Winter Aditif", "Winter Aditif Optimum"),
+  SSE = c(SSE_winter1, SSE_winter1.opt),
+  MSE = c(MSE_winter1, MSE_winter1.opt),
+  RMSE = c(RMSE_winter1, RMSE_winter1.opt)
+)
+
+akurasi_winter1.train
+
+```
+Pada data latih, model Winter Aditif optimum (alpha=0,8825; beta=0,0153; gamma=1) jauh lebih baik dibandingkan model manual (alpha=0,2; beta=0,1; gamma=0,1): MSE optimum sebesar 303,96 dibandingkan MSE manual sebesar 853,01, dengan RMSE masing-masing 17,43 dan 29,21. Hal ini wajar karena parameter optimum memang dipilih khusus untuk meminimumkan SSE pada data latih.
+
+### Akurasi Data Uji
+
+```{r}
+# Data aktual testing
+aktual_winter <- as.numeric(testing_winter$Sunspot)
+
+# Forecast model pertama
+ramalan_winter1 <- as.numeric(forecast1)
+
+# Forecast model optimum
+ramalan_winter1.opt <- as.numeric(forecast1.opt)
+
+# Error
+error_winter1 <- ramalan_winter1 - aktual_winter
+error_winter1.opt <- ramalan_winter1.opt - aktual_winter
+
+# Akurasi model pertama
+SSEtesting_winter1 <- sum(error_winter1^2)
+MSEtesting_winter1 <- mean(error_winter1^2)
+RMSEtesting_winter1 <- sqrt(MSEtesting_winter1)
+
+# Akurasi model optimum
+SSEtesting_winter1.opt <- sum(error_winter1.opt^2)
+MSEtesting_winter1.opt <- mean(error_winter1.opt^2)
+RMSEtesting_winter1.opt <- sqrt(MSEtesting_winter1.opt)
+
+```
+
+```{r}
+akurasi_testing_winter1 <- data.frame(
+  Model = c("Winter Aditif", "Winter Aditif Optimum"),
+  SSE = c(SSEtesting_winter1, SSEtesting_winter1.opt),
+  MSE = c(MSEtesting_winter1, MSEtesting_winter1.opt),
+  RMSE = c(RMSEtesting_winter1, RMSEtesting_winter1.opt)
+)
+
+akurasi_testing_winter1
+
+```
+Pada data uji, model optimum tetap unggul dengan MSE=1016,40 (RMSE=31,88) dibandingkan model manual dengan MSE=1905,91 (RMSE=43,66). Meskipun peningkatan error dari data latih ke data uji secara relatif lebih besar pada model optimum (dari MSE 303,96 menjadi 1016,40, naik sekitar 3,3 kali) dibandingkan model manual (dari 853,01 menjadi 1905,91, naik sekitar 2,2 kali) — pola yang biasanya menandakan overfitting — secara nilai absolut model optimum tetap jauh lebih akurat pada data uji. Artinya, di sini pengoptimuman parameter tetap menghasilkan model yang lebih baik untuk generalisasi, meski keunggulannya menyusut dibandingkan pada data latih.
+
+## Winter Multiplikatif
+
+Model multiplikatif digunakan cocok digunakan jika plot data asli menunjukkan fluktuasi musiman yang bervariasi.
+
+### Pemulusan
+
+```{r}
+# Pemulusan Winter Multiplikatif
+winter2 <- HoltWinters(
+  training_winter.ts,
+  alpha = 0.2,
+  beta = 0.1,
+  gamma = 0.3,
+  seasonal = "multiplicative"
+)
+
+winter2
+
+winter2$fitted
+
+xhat2 <- winter2$fitted[, "xhat"]
+```
+Sama seperti model aditif, output `winter2` menampilkan SSE serta koefisien level, tren, dan musiman, namun komponen musiman pada model multiplikatif bekerja secara perkalian, bukan penjumlahan, sehingga lebih sesuai untuk data dengan amplitudo musiman yang berubah-ubah mengikuti level data.
+
+```{r}
+# Winter Multiplikatif dengan parameter optimum
+winter2.opt <- HoltWinters(
+  training_winter.ts,
+  alpha = NULL,
+  beta = NULL,
+  gamma = NULL,
+  seasonal = "multiplicative"
+)
+
+winter2.opt
+
+# Parameter optimum
+winter2.opt$alpha
+winter2.opt$beta
+winter2.opt$gamma
+
+xhat2.opt <- winter2.opt$fitted[, "xhat"]
+
+```
+Nilai alpha, beta, dan gamma optimum di atas dipilih otomatis untuk meminimumkan SSE pada data latih dengan skema musiman multiplikatif.
+
+### Peramalan
+
+```{r}
+# Forecast Winter Multiplikatif
+forecast2 <- predict(winter2, n.ahead = h_winter)
+forecast2.opt <- predict(winter2.opt, n.ahead = h_winter)
+
+forecast2
+forecast2.opt
+
+```
+Hasil ramalan Winter Multiplikatif manual dan optimum di atas dapat dibandingkan langsung dengan hasil ramalan Winter Aditif sebelumnya untuk melihat metode musiman mana yang lebih sesuai dengan pola data sunspot.
+
+### Plot Deret Waktu
+
+```{r}
+plot(
+  training_winter.ts,
+  main = "Winter Multiplikatif Data Sunspot",
+  type = "l",
+  col = "black",
+  xlab = "Periode",
+  ylab = "Sunspot Number"
+)
+
+lines(xhat2, col = "red", lty = 1, lwd = 2)
+lines(xhat2.opt, col = "blue", lty = 1, lwd = 2)
+
+lines(
+  ts(
+    forecast2,
+    start = tsp(training_winter.ts)[2] + 1/7,
+    frequency = 7
+  ),
+  col = "red",
+  lwd = 2
+)
+
+lines(
+  ts(
+    forecast2.opt,
+    start = tsp(training_winter.ts)[2] + 1/7,
+    frequency = 7
+  ),
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topleft",
+  c("Data Aktual", "Winter Multiplikatif",
+    "Winter Multiplikatif Optimum"),
+  col = c("black", "red", "blue"),
+  lty = 1,
+  cex = 0.7
+)
+
+```
+Sama seperti pada model aditif, plot ini digunakan untuk menilai secara visual seberapa baik garis pemulusan dan ramalan Winter Multiplikatif mengikuti pola data aktual.
+
+### Akurasi Data Latih
+
+```{r}
+# Akurasi training Winter Multiplikatif
+SSE_winter2 <- winter2$SSE
+MSE_winter2 <- SSE_winter2 / length(training_winter.ts)
+RMSE_winter2 <- sqrt(MSE_winter2)
+
+SSE_winter2.opt <- winter2.opt$SSE
+MSE_winter2.opt <- SSE_winter2.opt / length(training_winter.ts)
+RMSE_winter2.opt <- sqrt(MSE_winter2.opt)
+
+akurasi_winter2.train <- data.frame(
+  Model = c("Winter Multiplikatif",
+            "Winter Multiplikatif Optimum"),
+  SSE = c(SSE_winter2, SSE_winter2.opt),
+  MSE = c(MSE_winter2, MSE_winter2.opt),
+  RMSE = c(RMSE_winter2, RMSE_winter2.opt)
+)
+
+akurasi_winter2.train
+
+```
+Pada data latih, model Winter Multiplikatif optimum (alpha=0,9285; beta=0,0166; gamma=1) memang jauh lebih baik dibandingkan model manual (alpha=0,2; beta=0,1; gamma=0,3): MSE optimum=273,69 (RMSE=16,54) dibandingkan MSE manual=833,48 (RMSE=28,87), sehingga pengoptimuman parameter benar-benar memperbaiki pemulusan pada data latih.
+
+### Akurasi Data Uji
+
+```{r}
+# Forecast
+ramalan_winter2 <- as.numeric(forecast2)
+ramalan_winter2.opt <- as.numeric(forecast2.opt)
+
+# Error
+error_winter2 <- ramalan_winter2 - aktual_winter
+error_winter2.opt <- ramalan_winter2.opt - aktual_winter
+
+# Akurasi model multiplikatif
+SSEtesting_winter2 <- sum(error_winter2^2)
+MSEtesting_winter2 <- mean(error_winter2^2)
+RMSEtesting_winter2 <- sqrt(MSEtesting_winter2)
+
+# Akurasi model optimum
+SSEtesting_winter2.opt <- sum(error_winter2.opt^2)
+MSEtesting_winter2.opt <- mean(error_winter2.opt^2)
+RMSEtesting_winter2.opt <- sqrt(MSEtesting_winter2.opt)
+
+```
+
+```{r}
+akurasi_testing_winter2 <- data.frame(
+  Model = c("Winter Multiplikatif",
+            "Winter Multiplikatif Optimum"),
+  SSE = c(SSEtesting_winter2, SSEtesting_winter2.opt),
+  MSE = c(MSEtesting_winter2, MSEtesting_winter2.opt),
+  RMSE = c(RMSEtesting_winter2, RMSEtesting_winter2.opt)
+)
+
+akurasi_testing_winter2
+
+```
+Pada data uji, model Winter Multiplikatif optimum kembali unggul dengan MSE=966,59 (RMSE=31,09) dibandingkan model manual dengan MSE=2021,82 (RMSE=44,96). Nilai MSE model optimum ini bahkan menjadi yang **terbaik kedua** di antara seluruh delapan metode yang dicoba pada tugas ini (lihat perbandingan lengkap di akhir dokumen), hanya kalah dari DMA.
+
+## Perbandingan Winter Aditif dan Multiplikatif
+
+```{r}
+perbandingan_winter <- data.frame(
+  Model = c(
+    "Winter Aditif",
+    "Winter Aditif Optimum",
+    "Winter Multiplikatif",
+    "Winter Multiplikatif Optimum"
+  ),
+  SSE = c(
+    SSEtesting_winter1,
+    SSEtesting_winter1.opt,
+    SSEtesting_winter2,
+    SSEtesting_winter2.opt
+  ),
+  MSE = c(
+    MSEtesting_winter1,
+    MSEtesting_winter1.opt,
+    MSEtesting_winter2,
+    MSEtesting_winter2.opt
+  ),
+  RMSE = c(
+    RMSEtesting_winter1,
+    RMSEtesting_winter1.opt,
+    RMSEtesting_winter2,
+    RMSEtesting_winter2.opt
+  )
+)
+
+perbandingan_winter
+
+```
+Dari keempat varian model Winter di atas, urutan performa pada data uji dari yang terbaik adalah: **Winter Multiplikatif Optimum** (MSE=966,59) > Winter Aditif Optimum (MSE=1016,40) > Winter Aditif manual (MSE=1905,91) > Winter Multiplikatif manual (MSE=2021,82). Pola ini menunjukkan bahwa untuk data sunspot ini, faktor yang paling menentukan performa bukanlah pilihan aditif vs multiplikatif (selisih keduanya relatif kecil), melainkan penggunaan parameter yang dioptimalkan — kedua model optimum jauh mengungguli kedua model dengan parameter manual.
+
+# Perbandingan Seluruh Metode 
+
+```{r}
+# Perbandingan MSE seluruh metode
+MSE_semua <- data.frame(
+  Metode = c(
+    "SMA",
+    "DMA",
+    "SES",
+    "DES",
+    "Winter Aditif",
+    "Winter Aditif Optimum",
+    "Winter Multiplikatif",
+    "Winter Multiplikatif Optimum"
+  ),
+  MSE = c(
+    MSE_test.sma,
+    MSE_test.dma,
+    MSEtesting1,
+    MSEtestingdes1,
+    MSEtesting_winter1,
+    MSEtesting_winter1.opt,
+    MSEtesting_winter2,
+    MSEtesting_winter2.opt
+  )
+)
+
+MSE_semua
+
+```
+Tabel ini merangkum nilai MSE data uji dari seluruh metode pemulusan yang telah dicoba pada data sunspot. Nilai MSE untuk SES dan DES yang diambil di sini (`MSEtesting1`=1024,60 dan `MSEtestingdes1`=5537,25) masing-masing hanya mewakili skenario alpha=0.2 (SES) dan skenario 1/alpha=0.2,beta=0.2 (DES), bukan skenario terbaik dari masing-masing metode. Skenario SES terbaik (alpha=0.7) sebenarnya memberikan MSE=1022,62 (hampir sama, karena ketiga skenario SES memang sangat mirip pada data uji), sedangkan skenario DES terbaik (alpha=0.6, beta=0.3) memberikan MSE=1743,32 — jauh lebih baik daripada 5537,25 yang tercantum di tabel, meski masih kalah dari mayoritas metode lain. Menggunakan MSE terbaik masing-masing pun tidak mengubah kesimpulan akhir di bawah ini: DMA tetap menjadi metode dengan MSE data uji terkecil secara keseluruhan.
+
+```{r}
+# Mengurutkan model berdasarkan MSE terkecil
+MSE_semua[order(MSE_semua$MSE), ]
+
+```
+Setelah diurutkan dari MSE terkecil, urutannya adalah: **DMA** (MSE=847,88) sebagai yang terbaik, diikuti Winter Multiplikatif Optimum (966,59), Winter Aditif Optimum (1016,40), SMA (1020,88), SES (1024,60), Winter Aditif manual (1905,91), Winter Multiplikatif manual (2021,82), dan DES sebagai yang terburuk (5537,25). Dengan demikian, **Double Moving Average (DMA, m=3)** menjadi metode yang direkomendasikan sebagai model akhir untuk data sunspot ini, meskipun MAPE data uji-nya sendiri masih tergolong tinggi (53,75%, di atas ambang 50%), sehingga secara umum, seluruh metode pemulusan sederhana yang dicoba pada tugas ini belum memberikan hasil peramalan yang benar-benar akurat untuk 20 hari ke depan data sunspot, kemungkinan karena data mengandung tren yang berubah arah dan fluktuasi harian yang tinggi sehingga sulit diekstrapolasi oleh metode pemulusan klasik.
+
