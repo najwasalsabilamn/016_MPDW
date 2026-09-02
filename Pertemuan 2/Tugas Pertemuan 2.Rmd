@@ -1,0 +1,528 @@
+---
+title: "Tugas Praktikum 2"
+author: "Najwa Salsabila M.N_M0401241016"
+output: 
+  rmdformats::readthedown:
+    self_contained: true
+---
+
+# Pemanggilan *Packages*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+#install.packages("https://cran.r-project.org/src/contrib/Archive/orcutt/orcutt_2.1.tar.gz", repos = NULL, type = "source")
+#install.packages("orcutt")
+#install.packages("HoRM")
+```
+
+```{r}
+library(dplyr)
+library(readxl)
+library(lmtest)   #digunakan untuk uji formal Breusch-Pagan dan Durbin-Watson
+library(orcutt)   #untuk membuat model regresi Cochrane-Orcutt
+library(HoRM)     #untuk membuat model regresi Hildreth-Lu
+```
+
+Kedua data diperlakukan sebagai data *cross-section* biasa, sehingga model regresi yang dibentuk adalah:
+
+- Data 1: `Market share` sebagai peubah respon (Y), `Price` sebagai peubah bebas (X)
+
+- Data 2: `Sales` sebagai peubah respon (Y), `Advertising` sebagai peubah bebas (X)
+
+# BAGIAN 1: Data Market Share dan Price
+
+## Input Data
+
+```{r}
+dtMS <- read_excel("C:\\Users\\najwe\\Downloads\\data_market_share_price.xlsx")
+dtMS <- as.data.frame(dtMS)
+names(dtMS) <- c("Period", "MarketShare", "Price")
+dtMS
+```
+
+## Eksplorasi Data
+
+```{r}
+#Pembuatan Scatter Plot
+plot(dtMS$Price, dtMS$MarketShare, pch = 20, col = "blue",
+     main = "Scatter Plot Price vs Market Share",
+     xlab = "Price",
+     ylab = "Market Share")
+
+#Menampilkan Nilai Korelasi
+cor(dtMS$Price, dtMS$MarketShare)
+```
+
+Berdasarkan *scatter plot* di atas, terlihat adanya hubungan / korelasi **negatif** yang kuat antara `Price` dan `Market Share`, ditunjukkan oleh titik-titik yang cenderung turun ke arah kanan bawah. Hal tersebut diperkuat oleh nilai korelasi sebesar $-0.9753$ yang menunjukkan hubungan negatif sangat kuat.
+
+## Pemodelan Awal (Regresi OLS)
+
+```{r}
+model1 <- lm(MarketShare ~ Price, data = dtMS)
+summary(model1)
+```
+
+Model regresi yang dihasilkan adalah $$\hat{y}_i = 26.910-24.290x_t$$ dengan nilai $R^2$ sebesar 0,94. Hal ini menunjukkan bahwa sebesar 94\% variasi pada peubah $Y$ dapat dijelaskan oleh peubah $X$, sedangkan 6\% sisanya dijelaskan oleh faktor lain di luar model.
+
+### Uji F
+
+```{r}
+summary(model1)
+cat("F tabel =", qf(0.95, df1 = 1, df2 = 18))
+```
+
+Nilai $F_{hitung}$ (350.3) jauh lebih besar dari $F_{tabel}$ (4.414), sehingga H0 ditolak. Artinya, `Price` berpengaruh nyata terhadap `Market Share`.
+
+
+## Uji Asumsi
+
+### Normalitas
+
+```{r}
+qqnorm(residuals(model1))
+qqline(residuals(model1), col = "red")
+```
+
+```{r}
+shapiro.test(residuals(model1))
+```
+
+*P-value* Shapiro-Wilk $> \alpha$ (5%), sehingga tak tolak H0. Cukup bukti untuk menyatakan sisaan menyebar normal.
+
+### Homoskedastisitas
+
+```{r}
+plot(
+  fitted(model1),
+  residuals(model1),
+  xlab = "Nilai Prediksi",
+  ylab = "Residual",
+  main = "Residual vs Fitted"
+)
+abline(h = 0, col = "red")
+```
+
+```{r}
+plot(model1, 1,
+     main = "Plot Residual vs. Nilai Dugaan",
+     sub  = "")
+```
+
+```{r}
+bptest(model1)
+```
+
+Uji Breusch-Pagan menghasilkan *p-value* $= 0.733 > \alpha$ (5%), sehingga tak tolak H0. Artinya, tidak cukup bukti menyatakan adanya heteroskedastisitas (ragam sisaan homogen).
+
+### Sisaan Saling Bebas
+
+```{r}
+plot(x    = 1:nrow(dtMS),
+     y    = residuals(model1),
+     type = "b",
+     ylab = "Residual",
+     xlab = "Urutan Pengamatan",
+     main = "Plot Residual terhadap Urutan Pengamatan",
+     pch  = 16,
+     col  = "steelblue")
+abline(h = 0, col = "red", lty = 2, lwd = 1.5)
+```
+
+Plot di atas memperlihatkan pola bergelombang (naik-turun secara berkelompok) pada sisaan menurut urutan pengamatan, mengindikasikan adanya autokorelasi.
+
+```{r}
+#ACF dan PACF identifikasi autokorelasi
+par(mfrow = c(1,2))
+acf(residuals(model1))
+pacf(residuals(model1))
+```
+
+Berdasarkan plot ACF dan PACF, terlihat beberapa lag di luar rentang batas, mengindikasikan adanya autokorelasi. Namun, untuk lebih memastikan akan dilakukan uji formal dengan uji Durbin-Watson.
+
+```{r}
+#Deteksi autokorelasi dengan uji-Durbin Watson
+#H0: tidak ada autokorelasi
+#H1: ada autokorelasi
+dwtest(model1)
+```
+
+Hasil uji Durbin-Watson menghasilkan nilai $DW = 1.1358$. Untuk $n=20$ dan $k=1$ peubah bebas, nilai tabel Durbin-Watson adalah $DL=1.2015$ dan $DU=1.4107$. Karena $DW (1.1358) < DL (1.2015)$ dan *p-value* $< 0.05$, maka H0 ditolak. Artinya, cukup bukti menyatakan **terdapat autokorelasi positif** pada sisaan, sehingga asumsi sisaan saling bebas **tidak terpenuhi**. Oleh karena itu diperlukan penanganan autokorelasi.
+
+## Penanganan Autokorelasi
+
+Karena asumsi sisaan saling bebas tidak terpenuhi (terdeteksi autokorelasi positif), dilakukan penanganan dengan dua metode: Cochrane-Orcutt dan Hildreth-Lu.
+
+### Metode Cochrane-Orcutt
+
+Penanganan metode Cochrane-Orcutt dapat dilakukan dengan bantuan packages Orcutt pada aplikasi `R` maupun secara manual. Berikut ini ditampilkan cara menggunakan bantuan `library` *packages* `Orcutt`.
+
+```{r}
+modelCO1 <- cochrane.orcutt(model1)
+modelCO1
+```
+
+Hasil model setelah penanganan Cochrane-Orcutt adalah $$\hat{y}_i = 26.72209-24.08413x_t$$ dengan nilai DW meningkat menjadi sekitar $1.958$ dan *p-value* $> 0.05$. Nilai DW berada pada rentang $DU < DW < 4-DU$ ($1.4107 < 1.958 < 2.59$), artinya tidak cukup bukti menyatakan sisaan masih terdapat autokorelasi pada taraf nyata 5%. Nilai $\hat\rho$ optimum yang digunakan adalah sekitar $0.4252$.
+
+```{r}
+#Rho optimum
+rho1 <- modelCO1$rho
+rho1
+```
+
+```{r}
+#Transformasi Manual
+n1 <- nrow(dtMS)
+ms.trans <- dtMS$MarketShare[-1] - dtMS$MarketShare[-n1]*rho1
+price.trans <- dtMS$Price[-1] - dtMS$Price[-n1]*rho1
+modelCO1manual <- lm(ms.trans ~ price.trans)
+summary(modelCO1manual)
+```
+
+```{r}
+#Mencari Penduga Koefisien Regresi setelah Transformasi ke Persamaan Awal
+b0bintang1 <- modelCO1manual$coefficients[-2]
+b0.1 <- b0bintang1/(1-rho1)
+b1.1 <- modelCO1manual$coefficients[-1]
+b0.1
+b1.1
+```
+
+Hasil perhitungan koefisien regresi manual sama dengan hasil dari *packages* `orcutt`.
+
+### Metode Hildreth-Lu
+
+Penanganan kedua adalah menggunakan metode Hildreth-Lu. Metode ini akan mencari nilai SSE terkecil dan dapat dicari secara manual maupun menggunakan packages. Jika menggunakan packages, gunakan `library` *packages* `HoRM`.
+
+```{r}
+library(HoRM)
+
+# ambil y dan x (satu prediktor)
+y1 <- dtMS$MarketShare
+x1 <- dtMS$Price
+
+# grid search rho 0–0.9
+r <- seq(0, 0.9, by = 0.1)
+tab1a <- data.frame(
+  rho = r,
+  SSE = sapply(r, function(rr) deviance(hildreth.lu(y1, x1, rr)))
+)
+
+tab1a            # tabel rho vs SSE
+```
+```{r}
+rho_hat1 <- tab1a$rho[which.min(tab1a$SSE)]   # rho terbaik
+fit_hl1  <- hildreth.lu(y1, x1, rho_hat1)     # model final
+summary(fit_hl1)
+```
+
+```{r}
+#Penanganan Autokorelasi Hildreth lu
+hildreth.lu.func <- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  return(lm(y~x))
+}
+
+#Pencarian rho optimum
+r <- c(seq(0,0.9, by= 0.1))
+tab1 <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model1))}))
+round(tab1, 4)
+```
+
+SSE minimum terlihat di sekitar $\rho=0.4$. Selanjutnya dicari $\rho$ yang lebih optimum dengan ketelitian lebih tinggi.
+
+```{r}
+#Rho optimal di sekitar 0.4
+rOpt1 <- seq(0.3,0.5, by= 0.001)
+tabOpt1 <- data.frame("rho" = rOpt1, "SSE" = sapply(rOpt1, function(i){deviance(hildreth.lu.func(i, model1))}))
+head(tabOpt1[order(tabOpt1$SSE),])
+```
+```{r}
+#Grafik SSE optimum
+par(mfrow = c(1,1))
+plot(tab1$SSE ~ tab1$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = 0.425, lty = 2, col="red", lwd=2)
+text(x=0.425, y=max(tab1$SSE)*0.9, labels = "rho=0.425", cex = 0.8)
+```
+
+Nilai $\rho$ optimum (SSE terkecil) adalah $\rho=0.425$.
+
+```{r}
+#Model terbaik
+modelHL1 <- hildreth.lu.func(0.425, model1)
+summary(modelHL1)
+
+#Transformasi Balik
+cat("y = ", coef(modelHL1)[1]/(1-0.425), "+", coef(modelHL1)[2], "x", sep = "")
+```
+
+Model hasil metode Hildreth-Lu adalah $$\hat{y}_i = 26.7227-24.0848x_t$$
+
+```{r}
+#Deteksi autokorelasi
+dwtest(modelHL1)
+```
+
+Nilai DW hasil metode Hildreth-Lu adalah sekitar $1.9577$, berada pada rentang $DU < DW < 4-DU$ dengan *p-value* $> 0.05$. Tidak cukup bukti menyatakan adanya autokorelasi setelah penanganan.
+
+### Perbandingan SSE
+
+```{r}
+sseModelawal1 <- anova(model1)$`Sum Sq`[-1]
+sseModelCO1 <- anova(modelCO1manual)$`Sum Sq`[-1]
+sseModelHL1 <- anova(modelHL1)$`Sum Sq`[-1]
+akurasi1 <- matrix(c(sseModelawal1, sseModelCO1, sseModelHL1), nrow = 1)
+colnames(akurasi1) <- c("Model Awal", "Model Cochrane-Orcutt", "Model Hildreth-Lu")
+row.names(akurasi1) <- "SSE"
+akurasi1
+```
+
+SSE model awal ($\approx 3.31$) lebih besar dibandingkan SSE model setelah penanganan CO maupun HL ($\approx 2.66$), menunjukkan kedua metode berhasil memperbaiki model.
+
+Jika dibandingkan antara kedua metode penanganan itu sendiri, SSE model Cochrane-Orcutt dan Hildreth-Lu bernilai sangat berdekatan (selisih hampir tidak terlihat), sejalan dengan nilai $\hat\rho$ optimum yang juga hampir sama antara keduanya (Cochrane-Orcutt: $\hat\rho \approx 0.4252$ dan Hildreth-Lu: $\hat\rho = 0.425$). Hal ini menunjukkan bahwa untuk data `Market Share-Price`, kedua metode sama-sama efektif dan konsisten dalam menemukan titik $\rho$ yang meminimumkan SSE, sehingga tidak terdapat perbedaan praktis yang berarti antara memilih salah satu dari kedua metode tersebut.
+
+# BAGIAN 2: Data Sales dan Advertising
+
+## Input Data
+
+```{r}
+dtSA <- read_excel("C:\\Users\\najwe\\Downloads\\data_sales_advertising_1975_2014.xlsx")
+dtSA <- as.data.frame(dtSA)
+names(dtSA) <- c("Year", "Sales", "Advertising")
+head(dtSA)
+```
+
+## Eksplorasi Data
+
+```{r}
+plot(dtSA$Advertising, dtSA$Sales, pch = 20, col = "blue",
+     main = "Scatter Plot Advertising vs Sales",
+     xlab = "Advertising",
+     ylab = "Sales")
+cor(dtSA$Advertising, dtSA$Sales)
+```
+
+*Scatter plot* menunjukkan hubungan / korelasi **positif** yang sangat kuat antara `Advertising` dan `Sales` (korelasi $= 0.9796$).
+
+## Pemodelan Awal (Regresi OLS)
+
+```{r}
+model2 <- lm(Sales ~ Advertising, data = dtSA)
+summary(model2)
+```
+
+Model regresi yang dihasilkan adalah $$\hat{y}_i = 5.9651+0.7103x_t$$ dengan nilai $R^2$ sebesar 0.95 yang berarti bahwa sebesar 95\% variasi pada variabel $Y$ dapat dijelaskan oleh variabel $X$.
+
+### Uji F
+
+```{r}
+summary(model2)
+cat("F tabel =", qf(0.95, df1 = 1, df2 = 38))
+```
+
+$F_{hitung}$ (902.3) $> F_{tabel}$ (4.098), sehingga H0 ditolak; `Advertising` berpengaruh nyata terhadap `Sales`.
+
+## Uji Asumsi
+
+### Normalitas
+
+```{r}
+qqnorm(residuals(model2))
+qqline(residuals(model2), col = "red")
+```
+
+```{r}
+shapiro.test(residuals(model2))
+```
+Berdasarkan uji Shapiro-Wilk diperoleh **p-value = 0,0188 < 0,05**, sehingga H₀ ditolak. Artinya, **residual model 12 tidak berdistribusi normal**, sehingga asumsi normalitas residual belum terpenuhi. **Namun, karena fokus analisis kali ini adalah penanganan autokorelasi, asumsi kenormalan tidak ditangani lebih lanjut.**
+
+### Homoskedastisitas
+
+```{r}
+plot(
+  fitted(model2),
+  residuals(model2),
+  xlab = "Nilai Prediksi",
+  ylab = "Residual",
+  main = "Residual vs Fitted"
+)
+abline(h = 0, col = "red")
+```
+
+```{r}
+plot(model2, 1,
+     main = "Plot Residual vs. Nilai Dugaan",
+     sub  = "")
+```
+
+```{r}
+bptest(model2)
+```
+
+Uji Breusch-Pagan menghasilkan *p-value* $= 0.951 > \alpha$ (5%), sehingga tak tolak H0. Tidak cukup bukti adanya heteroskedastisitas.
+
+### Sisaan Saling Bebas
+
+```{r}
+plot(x    = 1:nrow(dtSA),
+     y    = residuals(model2),
+     type = "b",
+     ylab = "Residual",
+     xlab = "Urutan Pengamatan",
+     main = "Plot Residual terhadap Urutan Pengamatan",
+     pch  = 16,
+     col  = "steelblue")
+abline(h = 0, col = "red", lty = 2, lwd = 1.5)
+```
+
+Plot memperlihatkan pola yang jelas (sisaan bergerak searah pada rentang waktu yang berdekatan), mengindikasikan autokorelasi kuat.
+
+```{r}
+#ACF dan PACF identifikasi autokorelasi
+par(mfrow = c(1,2))
+acf(residuals(model2))
+pacf(residuals(model2))
+```
+Plot ACF memperlihatkan lag-lag awal yang keluar dari batas signifikansi, mengindikasikan adanya autokorelasi positif yang kuat pada sisaan. Untuk memastikan hal ini akan dilakukan uji formal dengan uji Durbin-Watson.
+
+```{r}
+#Deteksi autokorelasi dengan uji-Durbin Watson
+#H0: tidak ada autokorelasi
+#H1: ada autokorelasi
+dwtest(model2)
+```
+
+Nilai $DW = 0.1620$. Untuk $n=40$ dan $k=1$, nilai tabel Durbin-Watson adalah $DL=1.4421$ dan $DU=1.5444$. Karena $DW (0.1620) < DL (1.4421)$ dan *p-value* jauh $< 0.05$, H0 ditolak sehingga terdapat autokorelasi positif yang kuat. Asumsi sisaan saling bebas **tidak terpenuhi**, wajar mengingat data bersifat deret waktu tahunan yang memiliki kelembaman. Diperlukan penanganan autokorelasi.
+
+## Penanganan Autokorelasi
+
+### Metode Cochrane-Orcutt
+
+Penanganan metode Cochrane-Orcutt dapat dilakukan dengan bantuan packages Orcutt pada aplikasi `R` maupun secara manual. Berikut ini ditampilkan cara menggunakan bantuan `library` *packages* `Orcutt`.
+
+```{r}
+modelCO2 <- cochrane.orcutt(model2)
+modelCO2
+```
+Model setelah penanganan: $$\hat{y}_i = 10.2524+0.4885x_t$$ dengan DW meningkat tajam menjadi sekitar $1.939$ ($DU < DW < 4-DU$: $1.54 < 1.939 < 2.46$), *p-value* $>0.05$. Nilai $\hat\rho$ optimum $\approx 0.9031$ (kelembaman tinggi pada data tahunan).
+
+```{r}
+#Rho optimum
+rho2 <- modelCO2$rho
+rho2
+```
+
+```{r}
+#Transformasi Manual
+n2 <- nrow(dtSA)
+sales.trans <- dtSA$Sales[-1] - dtSA$Sales[-n2]*rho2
+adv.trans <- dtSA$Advertising[-1] - dtSA$Advertising[-n2]*rho2
+modelCO2manual <- lm(sales.trans ~ adv.trans)
+summary(modelCO2manual)
+```
+
+```{r}
+#Mencari Penduga Koefisien Regresi setelah Transformasi ke Persamaan Awal
+b0bintang2 <- modelCO2manual$coefficients[-2]
+b0.2 <- b0bintang2/(1-rho2)
+b1.2 <- modelCO2manual$coefficients[-1]
+b0.2
+b1.2
+```
+
+Hasil perhitungan koefisien regresi manual ($\hat\beta_0 \approx 10.2524$ dan $\hat\beta_1 \approx 0.4885$) sama dengan hasil dari *packages* `orcutt`, sehingga transformasi dan perhitungan yang dilakukan sudah tepat.
+
+### Metode Hildreth-Lu
+
+Penanganan kedua adalah menggunakan metode Hildreth-Lu. Metode ini akan mencari nilai SSE terkecil dan dapat dicari secara manual maupun menggunakan packages. Jika menggunakan packages, gunakan `library` *packages* `HoRM`.
+
+```{r}
+library(HoRM)
+
+# ambil y dan x (satu prediktor saja)
+y2 <- dtSA$Sales
+x2 <- dtSA$Advertising
+
+# grid search rho 0–0.9
+r <- seq(0, 0.9, by = 0.1)
+tab2a <- data.frame(
+  rho = r,
+  SSE = sapply(r, function(rr) deviance(hildreth.lu(y2, x2, rr)))
+)
+
+tab2a            # tabel rho vs SSE
+```
+```{r}
+rho_hat2 <- tab2a$rho[which.min(tab2a$SSE)]   # rho terbaik
+fit_hl2  <- hildreth.lu(y2, x2, rho_hat2)     # model final
+summary(fit_hl2)
+```
+
+```{r}
+#Penanganan Autokorelasi Hildreth lu
+r <- c(seq(0,0.9, by= 0.1))
+tab2 <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model2))}))
+round(tab2, 4)
+```
+
+SSE terus menurun hingga batas atas pencarian ($\rho=0.9$), sehingga disimpulkan nilai SSE makin mengecil saat nilai $\rho$ mendekati 1.
+
+```{r}
+#Rho optimal di sekitar 0.9
+rOpt2 <- seq(0.80,0.99, by= 0.001)
+tabOpt2 <- data.frame("rho" = rOpt2, "SSE" = sapply(rOpt2, function(i){deviance(hildreth.lu.func(i, model2))}))
+head(tabOpt2[order(tabOpt2$SSE),])
+
+plot(tabOpt2$SSE ~ tabOpt2$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = 0.903, lty = 2, col="red", lwd=2)
+text(x=0.903, y=max(tabOpt2$SSE)*0.95, labels = "rho=0.903", cex = 0.8)
+```
+
+Nilai $\rho$ optimum $=0.903$, sejalan dengan hasil Cochrane-Orcutt.
+
+```{r}
+modelHL2 <- hildreth.lu.func(0.903, model2)
+summary(modelHL2)
+
+cat("y = ", coef(modelHL2)[1]/(1-0.903), "+", coef(modelHL2)[2], "x", sep = "")
+```
+
+Model hasil Hildreth-Lu: $$\hat{y}_i = 10.2475+0.4887x_t$$
+
+```{r}
+dwtest(modelHL2)
+```
+
+DW $\approx 1.9393$ ($1.54 < DW < 2.46$), *p-value* $>0.05$, autokorelasi sudah teratasi.
+
+### Perbandingan SSE
+
+```{r}
+sseModelawal2 <- anova(model2)$`Sum Sq`[-1]
+sseModelCO2 <- anova(modelCO2manual)$`Sum Sq`[-1]
+sseModelHL2 <- anova(modelHL2)$`Sum Sq`[-1]
+akurasi2 <- matrix(c(sseModelawal2, sseModelCO2, sseModelHL2), nrow = 1)
+colnames(akurasi2) <- c("Model Awal", "Model Cochrane-Orcutt", "Model Hildreth-Lu")
+row.names(akurasi2) <- "SSE"
+akurasi2
+```
+
+SSE model awal ($\approx 10.55453$) jauh lebih besar dibandingkan SSE setelah penanganan CO maupun HL ($\approx 1.29$).
+
+Sama seperti pada data `Market Share-Price`, SSE model Cochrane-Orcutt dan Hildreth-Lu pada data `Sales-Advertising` juga bernilai sangat berdekatan, dengan nilai $\hat\rho$ optimum yang hampir identik (Cochrane-Orcutt: $\hat\rho \approx 0.9031$; Hildreth-Lu: $\hat\rho = 0.903$). Hal ini mengindikasikan bahwa kedua metode konsisten dalam menemukan titik $\rho$ optimum yang meminimumkan SSE meskipun pendekatannya berbeda (Cochrane-Orcutt bersifat iteratif melalui *packages*, sedangkan Hildreth-Lu melakukan pencarian grid $\rho$ secara eksplisit). Dengan hasil yang hampir setara ini, pemilihan metode dapat didasarkan pada kemudahan penerapan, di mana Cochrane-Orcutt lebih praktis digunakan melalui *packages* `orcutt`.
+
+# Kesimpulan
+
+1. **Model `Market Share ~ Price`**: Asumsi **normalitas sisaan, homoskedastisitas** (uji Breusch-Pagan), dan **nilai harapan sisaan = 0** terpenuhi pada taraf nyata 5%. Namun, asumsi **sisaan saling bebas (non-autokorelasi)** tidak terpenuhi karena uji Durbin-Watson menunjukkan adanya autokorelasi positif dengan **DW = 1,1358**.
+
+2. **Model `Sales ~ Advertising`**: Asumsi **homoskedastisitas** (uji Breusch-Pagan) dan **nilai harapan sisaan = 0** terpenuhi pada taraf nyata 5%, tetapi **asumsi normalitas sisaan tidak terpenuhi**. Selain itu, asumsi **sisaan saling bebas (non-autokorelasi)** juga tidak terpenuhi, dengan **DW = 0,162** yang menunjukkan autokorelasi positif yang kuat. **Namun, karena fokus analisis adalah penanganan autokorelasi, asumsi kenormalan tidak ditangani lebih lanjut.**
+
+3. **Penanganan Autokorelasi**: Metode Cochrane-Orcutt dan Hildreth-Lu sama-sama berhasil menghilangkan autokorelasi pada kedua model (DW akhir $\approx 1.96$ dan $\approx 1.94$, berada pada rentang $DU < DW < 4-DU$ dengan *p-value* $>0.05$), dengan estimasi $\hat\rho$ dan SSE akhir yang hampir identik antar kedua metode pada masing-masing data ($\hat\rho \approx 0.425$ untuk `Market Share-Price`; $\hat\rho \approx 0.903$ untuk `Sales-Advertising`).
+
