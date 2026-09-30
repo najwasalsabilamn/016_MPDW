@@ -1,0 +1,520 @@
+---
+title: "Pemodelan ARIMA - Data Sunspot Number (Pendugaan Parameter, Diagnostik Model, dan Peramalan)"
+author: "Najwa Salsabila M.N_M0401241016"
+output: 
+  rmdformats::readthedown
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+### Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(TTR)
+library(aTSA)
+library(graphics)
+library(lmtest)
+library(readxl)
+```
+
+# Data Sunspot
+
+## Impor Data
+
+Data yang digunakan adalah data *Sunspot Number* (jumlah bintik
+matahari) harian yang bersumber dari berkas `Data_Sunspot.xlsx`. Data
+ini terdiri atas 100 observasi harian dengan kolom utama yang digunakan
+adalah `Sunspot Number`.
+
+```{r}
+data_sunspot <- read_excel("C:\\Users\\najwe\\Downloads\\Data Sunspot.xlsx")
+str(data_sunspot)
+head(data_sunspot)
+```
+
+```{r}
+sunspot <- data_sunspot$`Sunspot Number`
+sunspot.ts <- ts(sunspot)
+sunspot.ts
+```
+
+### Pembagian Data
+
+Data kemudian dibagi menjadi data latih dan data uji dengan proporsi
+80:20.
+
+```{r}
+n <- length(sunspot.ts)
+ntrain <- round(0.8 * n)
+
+train.ts <- ts(sunspot[1:ntrain])
+test.ts  <- ts(sunspot[(ntrain + 1):n])
+
+c(Jumlah_Data = n, Data_Latih = length(train.ts), Data_Uji = length(test.ts))
+```
+
+## Eksplorasi Data
+
+### Plot Data Penuh
+
+```{r}
+plot.ts(sunspot.ts,
+        lty = 1,
+        xlab = "Waktu (hari)",
+        ylab = "Sunspot Number",
+        main = "Plot Data Sunspot")
+```
+
+Berdasarkan plot data deret waktu di atas, terlihat bahwa data
+bergerak naik-turun dengan cukup persisten (nilai yang tinggi cenderung
+diikuti oleh nilai tinggi berikutnya) tanpa pola musiman yang jelas.
+
+### Plot Data Latih
+
+```{r}
+plot.ts(train.ts,
+        col = "navyblue",
+        lwd = 1,
+        type = "o",
+        xlab = "Waktu (hari)",
+        ylab = "Sunspot Number",
+        main = "Plot Data Latih Sunspot")
+```
+
+### Plot Data Uji
+
+```{r}
+plot.ts(test.ts,
+        col = "darkred",
+        lwd = 1,
+        type = "o",
+        xlab = "Waktu (hari)",
+        ylab = "Sunspot Number",
+        main = "Plot Data Uji Sunspot")
+```
+
+## Uji Stasioneritas Data
+
+### Plot ACF
+
+```{r}
+acf(train.ts, main = "ACF Data Latih", lag.max = 20)
+```
+
+Berdasarkan plot ACF di atas, terlihat bahwa plot ACF menurun secara
+perlahan (*tails off slowly*). Hal ini menjadi indikasi awal bahwa data
+tidak/belum sepenuhnya stasioner dalam rataan.
+
+### Uji ADF
+
+```{r}
+tseries::adf.test(train.ts)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat *p-value* sebesar 0,0635 yang
+lebih besar dari taraf nyata 5% sehingga tak tolak $H_0$ dan
+menandakan bahwa data belum stasioner dalam rataan secara meyakinkan
+(nilainya berada tepat di sekitar batas taraf nyata). Hal ini sejalan
+dengan pola *tails off* pada plot ACF sehingga penanganan
+ketidakstasioneran dalam rataan tetap perlu dilakukan.
+
+### Uji Kestasioneran Ragam (Box-Cox)
+
+```{r}
+index <- seq(1:ntrain)
+
+bc <- boxcox(train.ts ~ index, lambda = seq(-1, 3, by = 0.1))
+
+# Nilai lambda optimum
+lambda <- bc$x[which.max(bc$y)]
+lambda
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Gambar di atas menunjukkan nilai *rounded value* ($\lambda$) optimum
+sebesar 0,5 dan pada selang kepercayaan 95% nilai memiliki batas bawah
+-0,2 dan batas atas 1,2. Selang tersebut memuat nilai satu sehingga
+dapat dikatakan bahwa data sunspot stasioner dalam ragam sehingga tidak
+diperlukan transformasi Box-Cox.
+
+## Penanganan Ketidakstasioneran Data
+
+Karena data belum stasioner dalam rataan, dilakukan pembedaan
+(*differencing*) satu kali.
+
+```{r}
+train.diff <- diff(train.ts, differences = 1)
+
+plot.ts(train.diff,
+        lty = 1,
+        xlab = "Waktu (hari)",
+        ylab = "Data Difference 1 Sunspot",
+        main = "Plot Difference 1 Sunspot")
+```
+
+Berdasarkan plot data deret waktu di atas, terlihat bahwa data sudah
+bergerak stasioner di sekitar nilai tengahnya (tidak terdapat trend
+ataupun musiman pada data).
+
+### Plot ACF Data Hasil Differencing
+
+```{r}
+acf(train.diff, main = "ACF Data Difference 1", lag.max = 20)
+```
+
+### Uji ADF Data Hasil Differencing
+
+```{r}
+tseries::adf.test(train.diff)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat *p-value* sebesar 0,0323 yang
+lebih kecil dari taraf nyata 5% sehingga tolak $H_0$ atau data
+stasioner dalam rataan. Hal ini sesuai dengan hasil eksplorasi plot
+time series dan plot ACF, sehingga ketidakstasioneran data telah
+berhasil tertangani dan dapat dilanjutkan ke tahap identifikasi model.
+
+## Identifikasi Model
+
+### Plot ACF
+
+```{r}
+acf(train.diff, main = "ACF Data Difference 1", lag.max = 20)
+```
+
+Berdasarkan plot tersebut, plot ACF cenderung *cuts off* pada lag ke-1
+(dengan batas signifikansi kurang lebih $\pm 2/\sqrt{n}$), sehingga
+jika plot PACF dianggap *tails off*, model tentatifnya adalah
+ARIMA(0,1,1).
+
+### Plot PACF
+
+```{r}
+pacf(train.diff, main = "PACF Data Difference 1", lag.max = 20)
+```
+
+Berdasarkan plot tersebut, plot PACF juga cenderung *cuts off* pada
+lag ke-1, sehingga jika plot ACF dianggap *tails off*, model
+tentatifnya adalah ARIMA(1,1,0).
+
+Jika baik plot ACF maupun plot PACF keduanya dianggap *tails off*,
+maka model yang terbentuk adalah ARIMA(1,1,1).
+
+### Plot EACF
+
+```{r}
+eacf(train.diff)
+```
+
+Identifikasi model menggunakan plot EACF dilakukan dengan melihat
+ujung segitiga pada pola segitiga nol. Dalam hal ini model tentatif
+tambahan yang terbentuk adalah ARIMA(0,1,4) dan ARIMA(2,1,3).
+
+## Pendugaan Parameter Model Tentatif
+
+Berdasarkan identifikasi ACF, PACF, dan EACF di atas, terdapat lima
+model tentatif yang akan diduga parameternya, yaitu ARIMA(0,1,1),
+ARIMA(1,1,0), ARIMA(1,1,1), ARIMA(0,1,4), dan ARIMA(2,1,3).
+
+### ARIMA(0,1,1)
+
+```{r}
+model1 <- Arima(train.diff, order = c(0,0,1), method = "ML")
+summary(model1) #AIC=648.69
+lmtest::coeftest(model1) #ma1 signifikan
+```
+
+### ARIMA(1,1,0)
+
+```{r}
+model2 <- Arima(train.diff, order = c(1,0,0), method = "ML")
+summary(model2) #AIC=650.50
+lmtest::coeftest(model2) #ar1 signifikan
+```
+
+### ARIMA(1,1,1)
+
+```{r}
+model3 <- Arima(train.diff, order = c(1,0,1), method = "ML")
+summary(model3) #AIC=650.61
+lmtest::coeftest(model3) #tidak ada parameter (selain intersep) yang signifikan
+```
+
+### ARIMA(0,1,4)
+
+```{r}
+model4 <- Arima(train.diff, order = c(0,0,4), method = "ML")
+summary(model4) #AIC=647.69
+lmtest::coeftest(model4) #hanya ma1 yang signifikan
+```
+
+### ARIMA(2,1,3)
+
+```{r}
+model5 <- Arima(train.diff, order = c(2,0,3), method = "ML")
+summary(model5) #AIC=648.38
+lmtest::coeftest(model5) #ar2, ma1, ma2 signifikan; ar1 dan ma3 tidak
+```
+
+## Perbandingan AIC dan BIC
+
+```{r}
+model_tentatif <- data.frame(
+  Model = c("ARIMA(0,1,1)", "ARIMA(1,1,0)", "ARIMA(1,1,1)",
+            "ARIMA(0,1,4)", "ARIMA(2,1,3)"),
+  AIC   = c(AIC(model1), AIC(model2), AIC(model3), AIC(model4), AIC(model5)),
+  BIC   = c(BIC(model1), BIC(model2), BIC(model3), BIC(model4), BIC(model5))
+)
+
+model_tentatif
+```
+
+Berdasarkan pendugaan parameter di atas, model ARIMA(0,1,4) memiliki
+nilai AIC terkecil, tetapi hanya satu parameter (ma1) yang signifikan
+dan nilai BIC-nya justru paling besar akibat jumlah parameter yang
+lebih banyak. Model ARIMA(0,1,1) memiliki nilai AIC yang hampir sama
+dengan model terbaik (selisih sangat kecil), nilai BIC terkecil di
+antara seluruh model tentatif, serta parameter ma1-nya signifikan.
+Oleh karena itu, model yang dipilih adalah model ARIMA(0,1,1) karena
+lebih sederhana (parsimoni) namun tetap kompetitif dari segi AIC/BIC
+dan seluruh parameternya signifikan.
+
+## Overfitting
+
+Tahap selanjutnya adalah *overfitting* yang dilakukan dengan menaikkan
+orde AR(p) dan MA(q) dari model ARIMA(0,1,1). Kandidat model
+*overfitting* adalah ARIMA(1,1,1) dan ARIMA(0,1,2).
+
+```{r}
+#ARIMA(1,1,1) sudah diduga sebagai model3 di atas
+summary(model3) #AIC=650.61, ar1 tidak signifikan
+
+model1b <- Arima(train.diff, order = c(0,0,2), method = "ML")
+summary(model1b) #AIC=650.49
+lmtest::coeftest(model1b) #ma2 tidak signifikan
+```
+
+```{r}
+overfitting <- data.frame(
+  Model = c("ARIMA(0,1,1)", "ARIMA(1,1,1)", "ARIMA(0,1,2)"),
+  AIC   = c(AIC(model1), AIC(model3), AIC(model1b)),
+  BIC   = c(BIC(model1), BIC(model3), BIC(model1b))
+)
+
+overfitting
+```
+
+Kedua model hasil *overfitting* memiliki AIC yang lebih besar
+dibandingkan model ARIMA(0,1,1) dan terdapat parameter tambahan yang
+tidak signifikan. Oleh karena itu, model ARIMA(0,1,1) tetap digunakan
+sebagai model terbaik untuk melakukan peramalan.
+
+## Model Terbaik: ARIMA(0,1,1)
+
+```{r}
+model.terbaik <- Arima(train.diff, order = c(0,0,1), method = "ML")
+summary(model.terbaik)
+lmtest::coeftest(model.terbaik)
+```
+
+## Analisis Sisaan
+
+Model terbaik hasil identifikasi kemudian dicek asumsi sisaannya.
+Sisaan model ARIMA harus memenuhi asumsi normalitas, kebebasan, dan
+kehomogenan ragam. Diagnostik model dilakukan secara eksplorasi dan
+uji formal.
+
+### Eksplorasi Sisaan
+
+```{r}
+sisaan <- model.terbaik$residuals
+
+par(mfrow = c(2,2),
+    mar = c(4,4,2,1),
+    oma = c(0,0,2,0))
+
+# Q-Q Plot
+qqnorm(sisaan, main = "Normal Q-Q Plot")
+qqline(sisaan, col = "blue", lwd = 2)
+
+# Plot Sisaan vs Waktu
+plot(sisaan, type = "p",
+     main = "Plot Sisaan vs Waktu",
+     xlab = "Waktu", ylab = "Sisaan")
+
+# ACF Sisaan
+acf(sisaan, main = "ACF Sisaan")
+
+# PACF Sisaan
+pacf(sisaan, main = "PACF Sisaan")
+
+par(mfrow = c(1,1))
+```
+
+Berdasarkan plot kuantil-kuantil normal, secara eksplorasi terlihat
+sisaan menyebar mengikuti garis $45^{\circ}$ dengan cukup baik.
+Lebar pita sisaan pada plot sisaan vs waktu juga terlihat relatif
+seragam yang mengindikasikan ragam sisaan homogen. Plot ACF dan PACF
+sisaan tidak menunjukkan lag yang signifikan sehingga secara visual
+sisaan dapat dianggap saling bebas. Kondisi ini akan diuji lebih
+lanjut dengan uji formal.
+
+### Uji Formal
+
+```{r}
+#1) Sisaan menyebar normal
+ks.test(sisaan, "pnorm", mean(sisaan), sd(sisaan))
+#gagal tolak H0 > sisaan menyebar normal
+```
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Berdasarkan uji KS tersebut, didapat *p-value* sebesar 0,77 yang lebih
+besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan
+bahwa sisaan menyebar normal. Hal ini sesuai dengan hasil eksplorasi
+menggunakan plot kuantil-kuantil normal.
+
+```{r}
+#2) Sisaan saling bebas/tidak ada autokorelasi
+Box.test(sisaan, type = "Ljung-Box")
+#gagal tolak H0 > sisaan saling bebas
+```
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak saling bebas
+
+Berdasarkan uji Ljung-Box tersebut, didapat *p-value* sebesar 0,856
+yang lebih besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan
+menandakan bahwa sisaan saling bebas.
+
+```{r}
+#3) Sisaan homogen
+Box.test((sisaan)^2, type = "Ljung-Box")
+#gagal tolak H0 > sisaan homogen
+```
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+Berdasarkan uji Ljung-Box terhadap sisaan kuadrat tersebut, didapat
+*p-value* sebesar 0,711 yang lebih besar dari taraf nyata 5% sehingga
+gagal tolak $H_0$ dan menandakan bahwa ragam sisaan homogen.
+
+```{r}
+#4) Nilai tengah sisaan sama dengan nol
+t.test(sisaan, mu = 0, conf.level = 0.95)
+#gagal tolak H0 > nilai tengah sisaan sama dengan 0
+```
+
+$H_0$ : Nilai tengah sisaan sama dengan 0
+
+$H_1$ : Nilai tengah sisaan tidak sama dengan 0
+
+Berdasarkan uji-t tersebut, didapat *p-value* sebesar 0,967 yang lebih
+besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan
+bahwa nilai tengah sisaan sama dengan nol.
+
+Secara keseluruhan, model ARIMA(0,1,1) telah memenuhi seluruh asumsi
+sisaan (normalitas, kebebasan, kehomogenan ragam, dan nilai tengah nol)
+sehingga model ini layak digunakan untuk peramalan.
+
+## Peramalan
+
+Peramalan dilakukan menggunakan fungsi `forecast()` untuk sejumlah
+periode data uji yang tersedia (20 hari ke depan).
+
+```{r}
+#---FORECAST---#
+ramalan <- forecast::forecast(model.terbaik, h = length(test.ts))
+ramalan
+plot(ramalan)
+```
+
+```{r}
+data.ramalan <- ramalan$mean
+
+# Inverse differencing (mengembalikan hasil ramalan ke skala data asli)
+pt_akhir_train <- tail(train.ts, 1)
+
+hasil.diffinv <- diffinv(data.ramalan, differences = 1, xi = pt_akhir_train)
+hasil <- hasil.diffinv[-1]
+
+# Bandingkan aktual vs forecast
+perbandingan <- data.frame(
+  Aktual   = as.numeric(test.ts),
+  Forecast = round(hasil, 2)
+)
+
+perbandingan
+```
+
+```{r}
+# Hitung akurasi
+akurasi_test <- forecast::accuracy(hasil, as.numeric(test.ts))
+akurasi_test
+```
+
+```{r}
+# Plot perbandingan data aktual dan hasil forecast
+ts.plot(sunspot.ts, col = "black", lty = 1,
+        xlab = "Waktu (hari)", ylab = "Sunspot Number",
+        main = "Perbandingan Data Aktual dan Hasil Forecast")
+
+lines((ntrain + 1):n, hasil, col = "blue", lty = 2, lwd = 2)
+legend("topleft",
+       legend = c("Data Aktual", "Forecast"),
+       col = c("black", "blue"),
+       lty = c(1,2), lwd = c(1,2), bty = "n")
+```
+
+## Kesimpulan
+
+Berdasarkan seluruh tahapan pemodelan ARIMA terhadap data *Sunspot
+Number*, dapat disimpulkan sebagai berikut.
+
+1. Data sunspot pada level awal belum sepenuhnya stasioner dalam
+   rataan (mengikuti pola ACF yang *tails off slowly* dan *p-value*
+   uji ADF di sekitar taraf nyata 5%), tetapi sudah stasioner dalam
+   ragam (selang kepercayaan Box-Cox memuat nilai satu).
+2. Setelah dilakukan *differencing* satu kali, data menjadi stasioner
+   dalam rataan (uji ADF *p-value* = 0,0323).
+3. Berdasarkan identifikasi ACF, PACF, EACF, serta pendugaan dan
+   pemilihan model terbaik berdasarkan AIC/BIC dan signifikansi
+   parameter, model terbaik yang diperoleh adalah **ARIMA(0,1,1)**.
+4. Model ARIMA(0,1,1) telah memenuhi seluruh asumsi sisaan (normalitas,
+   kebebasan, kehomogenan ragam, dan nilai tengah sisaan sama dengan
+   nol).
+5. Hasil peramalan terhadap 20 data uji menunjukkan model cenderung
+   mendekati nilai rataan/level akhir data latih pada periode-periode
+   awal ramalan, dengan tingkat akurasi (MAPE) di atas 50%, yang
+   menandakan bahwa pergerakan naik-turun tajam pada data sunspot
+   harian cukup sulit ditangkap oleh model ARIMA sederhana ini dan
+   dapat menjadi catatan untuk eksplorasi model musiman/nonlinear pada
+   kajian lanjutan.
